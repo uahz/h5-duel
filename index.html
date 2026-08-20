@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>同屏对决 Duel</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%;
+    background: #14142b;
+    font-family: "Baloo 2", "Noto Sans SC", system-ui, sans-serif;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+  }
+  #wrap {
+    position: relative;
+    width: 390px;
+    height: 720px;
+    margin: 0 auto;
+    max-width: 100vw;
+    max-height: 100vh;
+    background: linear-gradient(160deg, #fef6fb 0%, #eef4ff 50%, #eafaf6 100%);
+    box-shadow: 0 20px 60px rgba(20,20,43,.35);
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* overlay panels */
+  .panel {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: 28px;
+    transition: opacity .35s ease;
+  }
+  .panel.hidden { opacity: 0; pointer-events: none; }
+
+  .title {
+    font-size: 40px; font-weight: 800; letter-spacing: 1px;
+    background: linear-gradient(90deg, #FF6B9D, #4D96FF);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 6px;
+  }
+  .subtitle { font-size: 14px; color: #6b6b86; margin-bottom: 26px; }
+  .vs { font-size: 18px; font-weight: 800; color: #FFD166; margin: 4px 0 20px; }
+
+  .card-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  .gcard {
+    width: 150px; height: 150px;
+    border-radius: 22px;
+    background: #fff;
+    box-shadow: 0 8px 22px rgba(77,150,255,.16);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    cursor: pointer;
+    border: 3px solid transparent;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .gcard:active { transform: scale(.95); }
+  .gcard .emoji { font-size: 46px; margin-bottom: 8px; }
+  .gcard .name { font-size: 17px; font-weight: 800; color: #2a2a4a; }
+  .gcard .desc { font-size: 11px; color: #9a9ab0; margin-top: 3px; }
+
+  .btn {
+    margin-top: 26px;
+    padding: 14px 40px;
+    border: none; border-radius: 999px;
+    font-size: 18px; font-weight: 800; color: #fff;
+    background: linear-gradient(90deg, #FF6B9D, #4D96FF);
+    box-shadow: 0 10px 24px rgba(77,150,255,.35);
+    cursor: pointer;
+  }
+  .btn:active { transform: scale(.96); }
+
+  .result { font-size: 30px; font-weight: 800; margin-bottom: 10px; }
+  .result.p1 { color: #FF6B9D; }
+  .result.p2 { color: #4D96FF; }
+  .result.tie { color: #FFB02E; }
+  .result-sub { font-size: 14px; color: #6b6b86; margin-bottom: 8px; }
+
+  .hint { font-size: 12px; color: #9a9ab0; margin-top: 22px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="390" height="720"></canvas>
+
+  <!-- 主菜单 -->
+  <div class="panel" id="menu">
+    <div class="title">同屏对决</div>
+    <div class="subtitle">一台手机 · 两个人 · 正面 PK</div>
+    <div class="card-row">
+      <div class="gcard" data-game="react">
+        <div class="emoji">⚡</div>
+        <div class="name">抢拍对决</div>
+        <div class="desc">比谁反应快</div>
+      </div>
+      <div class="gcard" data-game="pong">
+        <div class="emoji">🏓</div>
+        <div class="name">弹球对战</div>
+        <div class="desc">手指当球拍</div>
+      </div>
+      <div class="gcard" data-game="mash">
+        <div class="emoji">🔥</div>
+        <div class="name">连点狂魔</div>
+        <div class="desc">疯狂连点10秒</div>
+      </div>
+    </div>
+    <div class="hint">左半屏 = 玩家1（粉）　右半屏 = 玩家2（蓝）<br>支持双指同触 · 电脑可用 A/Z 与 K/M 键</div>
+  </div>
+
+  <!-- 结束 -->
+  <div class="panel hidden" id="over">
+    <div class="result" id="resultText">玩家1 胜！</div>
+    <div class="result-sub" id="resultSub"></div>
+    <button class="btn" id="retryBtn">再来一局</button>
+    <div class="hint" style="cursor:pointer" id="backBtn">← 返回选游戏</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const cvs = document.getElementById('c');
+  const ctx = cvs.getContext('2d');
+  const W = 390, H = 720;
+  const DPR = Math.min(window.devicePixelRatio || 1, 3);
+  cvs.width = W * DPR; cvs.height = H * DPR;
+  ctx.scale(DPR, DPR);
+
+  const P1 = '#FF6B9D', P2 = '#4D96FF', ACC = '#FFD166';
+  const C = { p1: P1, p2: P2, acc: ACC, ink: '#2a2a4a', sub: '#6b6b86', line: 'rgba(120,120,160,.25)' };
+
+  // ---------- state ----------
+  let scene = 'menu';          // 'menu' | 'play' | 'over'
+  let game = null;              // 'react' | 'pong' | 'mash'
+  let last = performance.now();
+  let acc = 0; const FIXED = 1000 / 120;
+
+  const menuEl = document.getElementById('menu');
+  const overEl = document.getElementById('over');
+  const resultText = document.getElementById('resultText');
+  const resultSub = document.getElementById('resultSub');
+
+  function show(scn) {
+    scene = scn;
+    menuEl.classList.toggle('hidden', scn !== 'menu');
+    overEl.classList.toggle('hidden', scn !== 'over');
+  }
+
+  // round-rect helper
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function endGame(winner, sub) {
+    resultText.className = 'result ' + (winner === 1 ? 'p1' : winner === 2 ? 'p2' : 'tie');
+    resultText.textContent = winner === 1 ? '玩家1 胜！' : winner === 2 ? '玩家2 胜！' : '平局！';
+    resultSub.textContent = sub || '';
+    show('over');
+  }
+
+  // ============================================================
+  //  GAME 1 — 抢拍对决 (Reaction)
+  // ============================================================
+  const react = {
+    phase: 'wait',   // 'wait' -> 'go' -> 'done'
+    t: 0, goAt: 0, endAt: 0,
+    winner: 0, falseStart: 0,
+    start() {
+      this.phase = 'wait'; this.t = 0;
+      this.goAt = 1200 + Math.random() * 2600;
+      this.winner = 0; this.falseStart = 0;
+    },
+    update(dt) {
+      this.t += dt;
+      if (this.phase === 'wait' && this.t >= this.goAt) { this.phase = 'go'; this.goAt = this.t; }
+      if (this.phase === 'go' && this.t - this.goAt > 2000) { // nobody tapped
+        this.phase = 'done'; endGame(0, '都没抢到，太慢啦');
+      }
+    },
+    tap(p) {
+      if (this.phase === 'wait') {            // 抢跑
+        this.phase = 'done';
+        this.falseStart = p;
+        const w = p === 1 ? 2 : 1;
+        endGame(w, (p === 1 ? '玩家1' : '玩家2') + ' 抢跑啦！');
+      } else if (this.phase === 'go') {
+        this.phase = 'done';
+        endGame(p, (p === 1 ? '玩家1' : '玩家2') + ' 反应更快！');
+      }
+    },
+    draw() {
+      ctx.fillStyle = C.ink; ctx.textAlign = 'center';
+      ctx.font = '800 22px "Baloo 2", sans-serif';
+      ctx.fillText('⚡ 抢拍对决', W / 2, 60);
+      ctx.font = '400 14px "Baloo 2", sans-serif'; ctx.fillStyle = C.sub;
+      ctx.fillText('GO 出现后，谁先点自己半屏谁赢', W / 2, 86);
+
+      // split zones
+      const mid = W / 2;
+      ctx.fillStyle = 'rgba(255,107,157,.06)'; ctx.fillRect(0, 110, mid - 2, H - 110);
+      ctx.fillStyle = 'rgba(77,150,255,.06)'; ctx.fillRect(mid + 2, 110, mid - 2, H - 110);
+      ctx.strokeStyle = C.line; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(mid, 110); ctx.lineTo(mid, H); ctx.stroke();
+
+      ctx.textAlign = 'center';
+      if (this.phase === 'wait') {
+        ctx.fillStyle = C.sub; ctx.font = '800 34px "Baloo 2", sans-serif';
+        ctx.fillText('准备…', W / 2, H / 2);
+        ctx.font = '400 13px "Baloo 2", sans-serif'; ctx.fillStyle = '#b0b0c4';
+        ctx.fillText('别抢跑哦', W / 2, H / 2 + 30);
+      } else if (this.phase === 'go') {
+        const s = 1 + 0.08 * Math.sin(performance.now() / 60);
+        ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(s, s);
+        ctx.fillStyle = ACC; ctx.font = '800 70px "Baloo 2", sans-serif';
+        ctx.fillText('GO!', 0, 24); ctx.restore();
+      }
+      // player labels
+      ctx.font = '800 16px "Baloo 2", sans-serif';
+      ctx.fillStyle = P1; ctx.fillText('玩家1', mid / 2, H - 30);
+      ctx.fillStyle = P2; ctx.fillText('玩家2', mid + mid / 2, H - 30);
+    }
+  };
+
+  // ============================================================
+  //  GAME 2 — 弹球对战 (Pong)
+  // ============================================================
+  const pong = {
+    padW: 14, padH: 92, ballR: 9,
+    p1y: 0, p2y: 0, ball: null,
+    score: [0, 0], win: 7, vx: 0, vy: 0,
+    keys: { p1u: false, p1d: false, p2u: false, p2d: false },
+    start() {
+      this.p1y = (H - this.padH) / 2; this.p2y = (H - this.padH) / 2;
+      this.score = [0, 0]; this.serve(Math.random() < .5 ? 1 : -1);
+    },
+    serve(dir) {
+      this.ball = { x: W / 2, y: H / 2, vx: dir * 3.4, vy: (Math.random() - .5) * 2.2 };
+    },
+    update(dt) {
+      const f = dt / FIXED;
+      const sp = 6.0;
+      if (this.keys.p1u) this.p1y -= sp * f;
+      if (this.keys.p1d) this.p1y += sp * f;
+      if (this.keys.p2u) this.p2y -= sp * f;
+      if (this.keys.p2d) this.p2y += sp * f;
+      this.p1y = Math.max(0, Math.min(H - this.padH, this.p1y));
+      this.p2y = Math.max(0, Math.min(H - this.padH, this.p2y));
+
+      const b = this.ball;
+      b.x += b.vx * f; b.y += b.vy * f;
+      // top/bottom walls
+      if (b.y < this.ballR) { b.y = this.ballR; b.vy *= -1; }
+      if (b.y > H - this.ballR) { b.y = H - this.ballR; b.vy *= -1; }
+      // paddles
+      const py1 = this.p1y, py2 = this.p2y;
+      if (b.x - this.ballR < this.padW + 8 && b.x > 0 && b.y > py1 && b.y < py1 + this.padH && b.vx < 0) {
+        b.x = this.padW + 8 + this.ballR;
+        const rel = (b.y - (py1 + this.padH / 2)) / (this.padH / 2);
+        b.vx = Math.abs(b.vx) * 1.04 + 0.15;
+        b.vy = rel * 4.2;
+      }
+      if (b.x + this.ballR > W - this.padW - 8 && b.x < W && b.y > py2 && b.y < py2 + this.padH && b.vx > 0) {
+        b.x = W - this.padW - 8 - this.ballR;
+        const rel = (b.y - (py2 + this.padH / 2)) / (this.padH / 2);
+        b.vx = -Math.abs(b.vx) * 1.04 - 0.15;
+        b.vy = rel * 4.2;
+      }
+      // score
+      if (b.x < -20) { this.score[1]++; this.serve(1); }
+      else if (b.x > W + 20) { this.score[0]++; this.serve(-1); }
+      if (this.score[0] >= this.win) endGame(1, '比分 ' + this.score[0] + ' : ' + this.score[1]);
+      if (this.score[1] >= this.win) endGame(2, '比分 ' + this.score[0] + ' : ' + this.score[1]);
+    },
+    draw() {
+      // center line
+      ctx.strokeStyle = C.line; ctx.lineWidth = 2;
+      ctx.setLineDash([8, 10]);
+      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+      ctx.setLineDash([]);
+      // score
+      ctx.textAlign = 'center'; ctx.font = '800 54px "Baloo 2", sans-serif';
+      ctx.fillStyle = P1; ctx.fillText(this.score[0], W / 2 - 60, 70);
+      ctx.fillStyle = P2; ctx.fillText(this.score[1], W / 2 + 60, 70);
+      // paddles
+      ctx.fillStyle = P1; rr(8, this.p1y, this.padW, this.padH, 7); ctx.fill();
+      ctx.fillStyle = P2; rr(W - 8 - this.padW, this.p2y, this.padW, this.padH, 7); ctx.fill();
+      // ball
+      const b = this.ball;
+      ctx.fillStyle = ACC; ctx.beginPath(); ctx.arc(b.x, b.y, this.ballR, 0, Math.PI * 2); ctx.fill();
+      // labels
+      ctx.font = '800 13px "Baloo 2", sans-serif'; ctx.fillStyle = P1;
+      ctx.fillText('A / Z 移动', 45, H - 18);
+      ctx.fillStyle = P2; ctx.fillText('K / M 移动', W - 45, H - 18);
+    }
+  };
+
+  // ============================================================
+  //  GAME 3 — 连点狂魔 (Mash)
+  // ============================================================
+  const mash = {
+    dur: 10000, t: 0, count: [0, 0],
+    start() { this.t = 0; this.count = [0, 0]; },
+    update(dt) {
+      this.t += dt;
+      if (this.t >= this.dur) {
+        const w = this.count[0] === this.count[1] ? 0 : this.count[0] > this.count[1] ? 1 : 2;
+        endGame(w, '玩家1 ' + this.count[0] + ' 下 · 玩家2 ' + this.count[1] + ' 下');
+      }
+    },
+    tap(p) { if (this.t < this.dur) this.count[p - 1]++; },
+    draw() {
+      const left = 1 - this.t / this.dur;
+      // timer bar
+      ctx.fillStyle = C.line; rr(40, 110, W - 80, 12, 6); ctx.fill();
+      ctx.fillStyle = ACC; rr(40, 110, (W - 80) * left, 12, 6); ctx.fill();
+
+      ctx.textAlign = 'center'; ctx.fillStyle = C.ink;
+      ctx.font = '800 30px "Baloo 2", sans-serif';
+      ctx.fillText('🔥 连点狂魔', W / 2, 70);
+
+      // two halves
+      const mid = W / 2;
+      const h1 = H - 150, top = 150;
+      ctx.fillStyle = 'rgba(255,107,157,.10)'; rr(20, top, mid - 30, h1, 18); ctx.fill();
+      ctx.fillStyle = 'rgba(77,150,255,.10)'; rr(mid + 10, top, mid - 30, h1, 18); ctx.fill();
+
+      ctx.font = '800 16px "Baloo 2", sans-serif';
+      ctx.fillStyle = P1; ctx.fillText('玩家1', mid / 2, top + 34);
+      ctx.fillStyle = P2; ctx.fillText('玩家2', mid + mid / 2, top + 34);
+
+      ctx.font = '800 56px "Baloo 2", sans-serif';
+      ctx.fillStyle = P1; ctx.fillText(this.count[0], mid / 2, top + 110);
+      ctx.fillStyle = P2; ctx.fillText(this.count[1], mid + mid / 2, top + 110);
+
+      const sec = Math.max(0, Math.ceil((this.dur - this.t) / 1000));
+      ctx.font = '800 24px "Baloo 2", sans-serif'; ctx.fillStyle = C.sub;
+      ctx.fillText(sec + 's', W / 2, top + 70);
+    }
+  };
+
+  // ============================================================
+  //  INPUT
+  // ============================================================
+  function dispatchTap(x, y) {
+    if (scene !== 'play') return;
+    const p = x < W / 2 ? 1 : 2;
+    if (game === 'react') react.tap(p);
+    else if (game === 'mash') mash.tap(p);
+    else if (game === 'pong') {
+      // pong: drag sets paddle via touchmove; a tap also nudges paddle to finger
+      if (p === 1) pong.p1y = y - pong.padH / 2;
+      else pong.p2y = y - pong.padH / 2;
+    }
+  }
+  function dispatchMove(x, y) {
+    if (scene !== 'play' || game !== 'pong') return;
+    if (x < W / 2) pong.p1y = y - pong.padH / 2;
+    else pong.p2y = y - pong.padH / 2;
+  }
+
+  cvs.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) dispatchTap(t.clientX * (W / cvs.clientWidth), t.clientY * (H / cvs.clientHeight));
+  }, { passive: false });
+  cvs.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    for (const t of e.changedTouches) dispatchMove(t.clientX * (W / cvs.clientWidth), t.clientY * (H / cvs.clientHeight));
+  }, { passive: false });
+  cvs.addEventListener('mousedown', (e) => {
+    dispatchTap(e.offsetX * (W / cvs.clientWidth), e.offsetY * (H / cvs.clientHeight));
+  });
+  cvs.addEventListener('mousemove', (e) => {
+    if (e.buttons) dispatchMove(e.offsetX * (W / cvs.clientWidth), e.offsetY * (H / cvs.clientHeight));
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (scene !== 'play') return;
+    const k = e.key.toLowerCase();
+    if (game === 'pong') {
+      if (k === 'a') pong.keys.p1u = true;
+      if (k === 'z') pong.keys.p1d = true;
+      if (k === 'k') pong.keys.p2u = true;
+      if (k === 'm') pong.keys.p2d = true;
+    } else if (game === 'mash') {
+      if (k === 'a' || k === 'z') mash.tap(1);
+      if (k === 'k' || k === 'm') mash.tap(2);
+    } else if (game === 'react') {
+      if (k === 'a' || k === 'z') react.tap(1);
+      if (k === 'k' || k === 'm') react.tap(2);
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'a') pong.keys.p1u = false;
+    if (k === 'z') pong.keys.p1d = false;
+    if (k === 'k') pong.keys.p2u = false;
+    if (k === 'm') pong.keys.p2d = false;
+  });
+
+  // ---------- menu / buttons ----------
+  document.querySelectorAll('.gcard').forEach(el => {
+    el.addEventListener('click', () => {
+      game = el.dataset.game;
+      if (game === 'react') react.start();
+      else if (game === 'pong') pong.start();
+      else if (game === 'mash') mash.start();
+      show('play');
+    });
+  });
+  document.getElementById('retryBtn').addEventListener('click', () => {
+    if (game === 'react') react.start();
+    else if (game === 'pong') pong.start();
+    else if (game === 'mash') mash.start();
+    show('play');
+  });
+  document.getElementById('backBtn').addEventListener('click', () => show('menu'));
+
+  // ============================================================
+  //  LOOP
+  // ============================================================
+  function loop(now) {
+    const dt = Math.min(now - last, 50); last = now;
+    acc += dt;
+    while (acc >= FIXED) {
+      const step = FIXED;
+      if (scene === 'play') {
+        if (game === 'react') react.update(step);
+        else if (game === 'pong') pong.update(step);
+        else if (game === 'mash') mash.update(step);
+      }
+      acc -= FIXED;
+    }
+
+    // clear
+    ctx.clearRect(0, 0, W, H);
+    if (scene === 'play') {
+      if (game === 'react') react.draw();
+      else if (game === 'pong') pong.draw();
+      else if (game === 'mash') mash.draw();
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
